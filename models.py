@@ -3,11 +3,10 @@ import torch.nn as nn
 
 from utils import idx2onehot
 
-
 class VAE(nn.Module):
 
     def __init__(self, encoder_layer_sizes, latent_size, decoder_layer_sizes,
-                 conditional=False, num_labels=0):
+                 conditional=False, num_labels=0, hidden=32):
 
         super().__init__()
 
@@ -21,21 +20,15 @@ class VAE(nn.Module):
         self.latent_size = latent_size
 
         self.encoder = Encoder(
-            encoder_layer_sizes, latent_size, conditional, num_labels)
+            encoder_layer_sizes, latent_size, conditional, num_labels, hidden)
         self.decoder = Decoder(
-            decoder_layer_sizes, latent_size, conditional, num_labels)
+            decoder_layer_sizes, latent_size, conditional, num_labels, hidden)
 
-    def forward(self, x, sl, c=None):
+    def forward(self, x, c=None):
 
-        means, log_var = self.encoder(x, sl, c)
+        means, log_var = self.encoder(x, c)
         
         z = self.reparameterize(means, log_var)
-        
-        # Perform PCA on the latent representation of data (z) in order to lower
-        # dimensionality, so that we can plot this point and give us a visualization
-        # of the latent data
-        
-        
         
         recon_x = self.decoder(z, c, x)
         
@@ -57,27 +50,20 @@ class VAE(nn.Module):
 
 class Encoder(nn.Module):
 
-    def __init__(self, layer_sizes, latent_size, conditional, num_labels):
+    def __init__(self, layer_sizes, latent_size, conditional, num_labels, hidden):
 
         super().__init__()
 
         self.conditional = conditional
         if self.conditional:
             layer_sizes[0] += num_labels
+        
+        self.lstm = nn.LSTM(input_size=layer_sizes[0], hidden_size=hidden, num_layers=1, batch_first=True)
+        
+        self.linear_means = nn.Linear(hidden, hidden)
+        self.linear_log_var = nn.Linear(hidden, hidden)
 
-        # print(layer_sizes, latent_size)
-        
-        self.layer_sizes = layer_sizes
-        
-        self.lstm = nn.LSTM(input_size=layer_sizes[0], hidden_size=layer_sizes[1], num_layers=1, batch_first=True)
-        
-        # self.linear_means = nn.Linear(layer_sizes[-1], latent_size)
-        # self.linear_log_var = nn.Linear(layer_sizes[-1], latent_size)
-        
-        self.linear_means = nn.Linear(layer_sizes[1], layer_sizes[1])
-        self.linear_log_var = nn.Linear(layer_sizes[1], layer_sizes[1])
-
-    def forward(self, x, sl, c=None):
+    def forward(self, x, c=None):
 
         if self.conditional:
             c = idx2onehot(c, n=10)
@@ -111,7 +97,7 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
 
-    def __init__(self, layer_sizes, latent_size, conditional, num_labels):
+    def __init__(self, layer_sizes, latent_size, conditional, num_labels, hidden):
 
         super().__init__()
 
@@ -123,9 +109,10 @@ class Decoder(nn.Module):
         
         # print(layer_sizes)
         
-        self.lstm = nn.LSTM(input_size=layer_sizes[0], hidden_size=layer_sizes[1], num_layers=1, batch_first=True)
+        self.lstm = nn.LSTM(input_size=hidden, hidden_size=layer_sizes[1], num_layers=1, batch_first=True)
         
-        self.output_layer = nn.Linear(layer_sizes[1], layer_sizes[1] * 48)
+        # self.output_layer = nn.Linear(layer_sizes[1], layer_sizes[1] * 48)
+        self.output_layer = nn.Linear(8*12, 8*12 * 48)
 
     def forward(self, z, c, x):
 
@@ -133,26 +120,33 @@ class Decoder(nn.Module):
             c = idx2onehot(c, n=10)
             z = torch.cat((z, c), dim=-1)
             
-        # print("Starting Decoder Forward")
-        # print(z.shape)
+        print("Starting Decoder Forward")
+        print(z.shape)
         
-        out, _ = self.lstm(z)
+        # Shape of Z before anything is (batch_size, hidden)
+        # ([8, 12])
         
-        # print("Output info after Decoder LSTM")
-        # print(out.shape)
+        # OG way was to put it through LSTM, making it size 76, then through output, so now 76*48, then reshape to 64, 48, 76
         
         # Want to expand shape from 1 time slice to original size
         # of 64, 48, 76
         # Ryan said can be done with Fully Connected Linear layer
         # or by copying time slice to fill
-        out = self.output_layer(out)
+        z = self.output_layer(z)
         
         # print("Output info after Fully Connected Linear Layer")
         # print(out.shape)
         # print(type(out))
         
         # print("Output info after Reshape")
-        out = out.reshape(x.shape)
+        z = z.reshape(x.shape)
         # print(out.shape)
+        
+        out, _ = self.lstm(z)
+        
+        # print("Output info after Decoder LSTM")
+        # print(out.shape)
+        
+        
 
         return out

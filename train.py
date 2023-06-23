@@ -8,10 +8,12 @@ import matplotlib.pyplot as plt
 from torchvision import transforms
 from torch.utils.data import DataLoader
 from collections import defaultdict
+
 from torchmimic.data import DecompensationDataset
 from torchmimic.data import IHMDataset
 from torchmimic.data import LOSDataset
 from torchmimic.data import PhenotypingDataset
+# from tester import IHMDataset
 
 from ray import tune
 from ray.air import Checkpoint, session
@@ -19,12 +21,16 @@ from ray.tune.schedulers import ASHAScheduler
 
 from models import VAE
 
+from sklearn.manifold import TSNE
+from sklearn.decomposition import PCA
+
 def load_data(config):
-    # dataset = IHMDataset(
-    #     root='/data/datasets/mimic3-benchmarks/data/root', train=True)
+    print("Loading dataset")
+
+    dataset = IHMDataset(root='/data/datasets/mimic3-benchmarks/data/in-hospital-mortality', train=True, customListFile = 'val_listfile.csv')
     
-    dataset = IHMDataset(
-        root='/data/datasets/mimic3-benchmarks/data/in-hospital-mortality', train=True)
+    # dataset = LOSDataset(root='/data/datasets/mimic3-benchmarks/data/length-of-stay', train=True, n_samples = 1836, customListFile = 'train_listfile.csv')
+    # dataset = PhenotypingDataset(root='/data/datasets/mimic3-benchmarks/data/phenotyping', train=True)
 
     print("Finished dataset initializing")
     
@@ -35,11 +41,11 @@ def load_data(config):
     
     return data_loader
 
-def loss_fn(recon_x, x, mean, log_var):
+def loss_fn(recon_x, x, mean, log_var, config):
     loss = torch.nn.MSELoss()
     lossActual = loss(x, recon_x)
 
-    KLD = (-0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp()) ) / x.size(0)
+    KLD = config["kld"] * (-0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp()) ) / x.size(0)
 
     return (lossActual + KLD)
 
@@ -59,38 +65,38 @@ def train(config):
         latent_size=args.latent_size,
         decoder_layer_sizes=args.decoder_layer_sizes,
         conditional=args.conditional,
-        num_labels=10 if args.conditional else 0).to(device)
-
+        num_labels=10 if args.conditional else 0,
+        hidden=config["hidden"]).to(device)
+    
     optimizer = torch.optim.Adam(vae.parameters(), lr=config["lr"])
+    
+    # print("Epochs: {:02d} Batch Size: {:02d} Learning Rate: {:.4f}".format(config["epochs"], config["batchSize"], config["lr"]))
+    
+    epochRange = config["epochs"]
 
     logs = defaultdict(list)
     
-    print("Epochs: {:02d} Batch Size: {:02d} Learning Rate: {:.4f}".format(config["epochs"], config["batchSize"], config["lr"]))
+    # means = []
     
-    total_loss = 0.0
-    
-    for epoch in range(config["epochs"]):
+    for epoch in range(epochRange):
 
+        tracker_epoch = defaultdict(lambda: defaultdict(dict))
+
+        # print(len(data_loader))
+        
         for iteration, (x, y, sl, m) in enumerate(data_loader):
             
-            # print(x.shape)
-            
-            x, y, sl, m = x.to(device), y.to(device), sl.to(device), m.to(device)
+            x, y = x.to(device), y.to(device)
 
             if args.conditional:
                 recon_x, mean, log_var, z = vae(x, y)
             else:
-                recon_x, mean, log_var, z = vae(x, sl)
-
-            # print("Done with VAE")
+                recon_x, mean, log_var, z = vae(x)
             
-            # print(recon_x.shape)
-            # print(x.shape)
+            # print(z.shape)
             
             #CALCULATE LOSS
-            loss = loss_fn(recon_x, x, mean, log_var)
-            
-            total_loss += loss.item()
+            loss = loss_fn(recon_x, x, mean, log_var, config)
 
             #BACK PROP
             optimizer.zero_grad()
@@ -100,54 +106,129 @@ def train(config):
             #ADDING LOSS TO LOGS
             logs['loss'].append(loss.item())
 
-            #BELOW IS ALL PRINTING AND GRAPH MAKING     
-            if iteration == len(data_loader)-1:
-                print("Epoch {:02d} Batch {:04d}/{:d}, Loss {:9.4f}".format(
-                    epoch, iteration, len(data_loader)-1, loss.item()))
+            #BELOW IS ALL PRINTING AND GRAPH MAKING
+            if not args.tune:
+                if iteration == len(data_loader)-1:
+                    print("Epoch {:02d} Batch {:04d}/{:d}, Loss {:9.4f}".format(
+                        epoch, iteration, len(data_loader)-1, loss.item()))
                 
-        session.report(
-            {"loss": loss.item()},
-        )
+                pca = PCA(n_components=2)
+                newMean = pca.fit_transform(mean.detach().cpu().numpy())
+                newVar = pca.fit_transform(log_var.detach().cpu().numpy())
+                
+                for i, yi in enumerate(y):
+                    id = len(tracker_epoch)
+                    tracker_epoch[id]['x'] = newMean[i, 0].item()
+                    tracker_epoch[id]['y'] = newMean[i, 1].item()
+                    tracker_epoch[id]['label'] = yi.item()
         
-        print("Training complete")
+        if args.tune:
+            session.report(
+                {"loss": loss.item()},
+            )
+        else:
+            df = pd.DataFrame.from_dict(tracker_epoch, orient='index')
+            g = sns.lmplot(
+                x='x', y='y', hue='label', data=df.groupby('label').head(300),
+                fit_reg=False, legend=True)
+            g.savefig(os.path.join(
+                args.fig_root, "E{:d}-Dist.png".format(epoch)),
+                dpi=300)
     
 def main(args):
-    config = {
-        "lr": tune.loguniform(1e-4, 1e-0),
-        "batchSize": tune.choice([16, 32, 64, 128, 256]),
-        "epochs": tune.choice([5, 10, 15, 20, 25, 30, 35, 40]),
-    }
-    
-    result = tune.run(
-        train,
-        config=config,
-    )
-    
-    best_trial = result.get_best_trial("loss", "min", "last")
-    print(f"Best config: {best_trial.config}")
-    print(f"Best loss: {best_trial.last_result['loss']}")
+    if args.tune:
+        print("Tuning!!!")
+        
+        # config = {
+        #     "lr": tune.loguniform(1e-4, 1e-0),
+        #     "batchSize": tune.grid_search([4, 8, 16, 32, 48, 64, 128]),
+        #     # "epochs": tune.grid_search([5, 10, 20, 30, 40]),
+        #     "epochs": args.epochs,
+        #     "hidden": tune.grid_search([4, 8, 12, 24, 32, 48, 56]),
+        # }
+        
+        config = {
+            "lr": args.learning_rate,
+            "batchSize": args.batch_size,
+            "epochs": args.epochs,
+            "hidden": args.hidden,
+            "kld": tune.grid_search([0.0000001, 0.000001, 0.00001, 0.0001, 0.001, 0.01, 0.1, 1.0]),
+        }
+
+        trainResources = tune.with_resources(train, resources={"cpu": 1, "gpu": 1})
+        tuner = tune.Tuner(
+            trainable=trainResources,
+            param_space=config,
+            tune_config=tune.TuneConfig(num_samples=2)
+        )
+        
+        result_grid: ResultGrid = tuner.fit()
+        best: Result = result_grid.get_best_result(metric="loss", mode="min")
+        
+        # best.metrics_dataframe.plot("training_iteration", "loss")
+        
+        print("Best config: ", best)
+        
+        print("====================================")
+        
+        print("Number of results: ", len(result_grid))
+        print("Trial errors?: ", result_grid.errors)
+        
+#         print("====================================")
+        
+#         results_df = result_grid.get_dataframe(filter_metric="loss", filter_mode="min")
+#         top = results_df[["loss"]].iloc[:15]
+#         print(top)
+        
+        print("====================================")
+        
+        lastResult_df = result_grid.get_dataframe()
+        lastResult_df = lastResult_df.sort_values(by=["loss"])
+        lastResult_df = lastResult_df[["loss", "config/lr", "config/batchSize", "config/hidden", "config/epochs", "config/kld"]]
+        print(lastResult_df.iloc[:15])
+        
+        bestResult_df = result_grid.get_dataframe(filter_metric="loss", filter_mode="min")
+        bestResult_df = bestResult_df.sort_values(by=["loss"])
+        
+        lastResult_df.to_csv('lastResult.csv')
+        bestResult_df.to_csv('bestResult.csv')
+              
+    else:
+        print("Training!!!")
+        
+        config = {
+            "lr": args.learning_rate,
+            "batchSize": args.batch_size,
+            "epochs": args.epochs,
+            "hidden": args.hidden,
+            "kld": args.kld,
+        }
+        train(config)
 
 if __name__ == '__main__':
     
-    bs = 16
-    lr = 0.1
+    bs = 8
+    # bs = 1
+    lr = 0.090703
     ep = 10
-    # for i in range(6):
-    #     bs = int(bs)
+    hd = 12
+    kld = 0.00001
+    
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--epochs", type=int, default=ep)
     parser.add_argument("--batch_size", type=int, default=bs)
     parser.add_argument("--learning_rate", type=float, default=lr)
+    parser.add_argument("--hidden", type=int, default=hd)
+    parser.add_argument("--kld", type=float, default=kld)
     parser.add_argument("--encoder_layer_sizes", type=list, default=[76, 32])
     parser.add_argument("--decoder_layer_sizes", type=list, default=[32, 76])
     parser.add_argument("--latent_size", type=int, default=2)
     parser.add_argument("--print_every", type=int, default=100)
-    parser.add_argument("--fig_root", type=str, default='figs')
+    parser.add_argument("--fig_root", type=str, default='newFigs')
     parser.add_argument("--conditional", action='store_true')
+    parser.add_argument("--tune", action='store_true')
 
     args = parser.parse_args()
 
     main(args)
-        
-        # bs = bs / 2
