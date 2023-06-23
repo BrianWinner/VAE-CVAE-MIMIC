@@ -109,7 +109,7 @@ class Decoder(nn.Module):
         # self.output_layer = nn.Linear(layer_sizes[1], layer_sizes[1] * 48)
         self.output_layer = nn.Linear(hidden, 48*hidden)
         
-        self.lstm = nn.LSTM(input_size=12, hidden_size=decode_hidden, num_layers=1, batch_first=True)
+        self.lstm = nn.LSTM(input_size=hidden, hidden_size=decode_hidden, num_layers=1, batch_first=True)
         
         self.output_layer2 = nn.Linear(decode_hidden, 76)
 

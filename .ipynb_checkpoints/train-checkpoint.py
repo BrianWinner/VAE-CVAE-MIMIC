@@ -116,27 +116,29 @@ def train(config):
                 #     pca = PCA(n_components=1)
                 # else:
                 #     pca = PCA(n_components=2)
-                # newMean = pca.fit_transform(mean.detach().cpu().numpy())
-                # newVar = pca.fit_transform(log_var.detach().cpu().numpy())
-                
-                # for i, yi in enumerate(y):
-                #     id = len(tracker_epoch)
-                #     tracker_epoch[id]['x'] = newMean[i, 0].item()
-                #     tracker_epoch[id]['y'] = newMean[i, 1].item()
-                #     tracker_epoch[id]['label'] = yi.item()
+                if x.size(dim=0) != 1:
+                    pca = PCA(n_components=2)
+                    newMean = pca.fit_transform(mean.detach().cpu().numpy())
+                    newVar = pca.fit_transform(log_var.detach().cpu().numpy())
+
+                    for i, yi in enumerate(y):
+                        id = len(tracker_epoch)
+                        tracker_epoch[id]['x'] = newMean[i, 0].item()
+                        tracker_epoch[id]['y'] = newMean[i, 1].item()
+                        tracker_epoch[id]['label'] = yi.item()
         
         if args.tune:
             session.report(
                 {"loss": loss.item()},
             )
-        # else:
-        #     df = pd.DataFrame.from_dict(tracker_epoch, orient='index')
-        #     g = sns.lmplot(
-        #         x='x', y='y', hue='label', data=df.groupby('label').head(300),
-        #         fit_reg=False, legend=True)
-        #     g.savefig(os.path.join(
-        #         args.fig_root, "E{:d}-Dist.png".format(epoch)),
-        #         dpi=300)
+        else:
+            df = pd.DataFrame.from_dict(tracker_epoch, orient='index')
+            g = sns.lmplot(
+                x='x', y='y', hue='label', data=df.groupby('label').head(300),
+                fit_reg=False, legend=True)
+            g.savefig(os.path.join(
+                args.fig_root, "E{:d}-Dist.png".format(epoch)),
+                dpi=300)
     
 def main(args):
     if args.tune:
@@ -151,12 +153,12 @@ def main(args):
         # }
         
         config = {
-            "lr": args.learning_rate,
+            "lr": tune.grid_search([1.0, 0.1, 0.01, 0.001, 0.0005, 0.0001, 0.00005, 0.00001, 0.000005, 0.000001, 0.0000005, 0.0000001]),
             "batchSize": args.batch_size,
             "epochs": args.epochs,
             "hidden": args.hidden,
             "kld": args.kld,
-            "decode_hidden": tune.grid_search([2, 4, 8, 12, 24, 32, 48, 56]),
+            "decode_hidden": args.decode_hidden,
         }
 
         trainResources = tune.with_resources(train, resources={"cpu": 1, "gpu": 1})
@@ -188,7 +190,7 @@ def main(args):
         
         lastResult_df = result_grid.get_dataframe()
         lastResult_df = lastResult_df.sort_values(by=["loss"])
-        lastResult_df = lastResult_df[["loss", "config/lr", "config/batchSize", "config/hidden", "config/epochs", "config/kld", "config\decode_hidden",]]
+        lastResult_df = lastResult_df[["loss", "config/lr", "config/batchSize", "config/hidden", "config/epochs", "config/kld", "config/decode_hidden",]]
         print(lastResult_df.iloc[:15])
         
         bestResult_df = result_grid.get_dataframe(filter_metric="loss", filter_mode="min")
@@ -214,25 +216,32 @@ if __name__ == '__main__':
     
     bs = 8
     # bs = 1
-    lr = 0.090703
+    # lr = 0.090703
+    lr = 0.0005
     ep = 10
-    hd = 12
+    # hd = 12
+    hd = 128
     kld = 0.00001
-    d_hd = 8
+    # d_hd = 56
+    d_hd = 128
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=0)
+    
     parser.add_argument("--epochs", type=int, default=ep)
     parser.add_argument("--batch_size", type=int, default=bs)
     parser.add_argument("--learning_rate", type=float, default=lr)
     parser.add_argument("--hidden", type=int, default=hd)
     parser.add_argument("--kld", type=float, default=kld)
     parser.add_argument("--decode_hidden", type=int, default=d_hd)
+    
     parser.add_argument("--encoder_layer_sizes", type=list, default=[76, 32])
     parser.add_argument("--decoder_layer_sizes", type=list, default=[32, 76])
     parser.add_argument("--latent_size", type=int, default=2)
+    
     parser.add_argument("--print_every", type=int, default=100)
     parser.add_argument("--fig_root", type=str, default='newFigs')
+    
     parser.add_argument("--conditional", action='store_true')
     parser.add_argument("--tune", action='store_true')
 
