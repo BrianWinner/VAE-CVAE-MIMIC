@@ -46,6 +46,7 @@ def loss_fn(recon_x, x, mean, log_var, config):
     lossActual = loss(x, recon_x)
 
     KLD = config["kld"] * (-0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp()) ) / x.size(0)
+    # Need to double check KLD calculation to see if correct, gotten from original VAE-CVAE repo
 
     return (lossActual + KLD)
 
@@ -70,6 +71,7 @@ def train(config):
         decode_hidden=config["decode_hidden"]).to(device)
     
     optimizer = torch.optim.Adam(vae.parameters(), lr=config["lr"])
+    # optimizer = torch.optim.RMSprop(vae.parameters(), lr=0.0003, momentum=0.1, alpha=0.001)
     
     # print("Epochs: {:02d} Batch Size: {:02d} Learning Rate: {:.4f}".format(config["epochs"], config["batchSize"], config["lr"]))
     
@@ -77,13 +79,9 @@ def train(config):
 
     logs = defaultdict(list)
     
-    # means = []
-    
     for epoch in range(epochRange):
 
         tracker_epoch = defaultdict(lambda: defaultdict(dict))
-
-        # print(len(data_loader))
         
         for iteration, (x, y, sl, m) in enumerate(data_loader):
             
@@ -94,7 +92,14 @@ def train(config):
             else:
                 recon_x, mean, log_var, z = vae(x)
             
-            # print(z.shape)
+#             print("Z Shape")
+#             print(z.shape)
+            
+#             print(mean.shape)
+#             print(log_var.shape)
+#             print(recon_x.shape)
+            
+            # Z, mean, and log_var all have size of ([batch_size, hidden size])
             
             #CALCULATE LOSS
             loss = loss_fn(recon_x, x, mean, log_var, config)
@@ -112,14 +117,14 @@ def train(config):
                 if iteration == len(data_loader)-1:
                     print("Epoch {:02d} Batch {:04d}/{:d}, Loss {:9.4f}".format(
                         epoch, iteration, len(data_loader)-1, loss.item()))
-                # if x.size(dim=0) == 1:
-                #     pca = PCA(n_components=1)
-                # else:
-                #     pca = PCA(n_components=2)
+                
                 if x.size(dim=0) != 1:
                     pca = PCA(n_components=2)
                     newMean = pca.fit_transform(mean.detach().cpu().numpy())
                     newVar = pca.fit_transform(log_var.detach().cpu().numpy())
+                    
+                    # print(newMean.shape)
+                    # newMean has shape of (8,2)
 
                     for i, yi in enumerate(y):
                         id = len(tracker_epoch)
@@ -171,20 +176,12 @@ def main(args):
         result_grid: ResultGrid = tuner.fit()
         best: Result = result_grid.get_best_result(metric="loss", mode="min")
         
-        # best.metrics_dataframe.plot("training_iteration", "loss")
-        
         print("Best config: ", best)
         
         print("====================================")
         
         print("Number of results: ", len(result_grid))
         print("Trial errors?: ", result_grid.errors)
-        
-#         print("====================================")
-        
-#         results_df = result_grid.get_dataframe(filter_metric="loss", filter_mode="min")
-#         top = results_df[["loss"]].iloc[:15]
-#         print(top)
         
         print("====================================")
         
@@ -220,10 +217,10 @@ if __name__ == '__main__':
     lr = 0.0005
     ep = 10
     # hd = 12
-    hd = 128
+    hd = 500
     kld = 0.00001
     # d_hd = 56
-    d_hd = 128
+    d_hd = 500
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=0)
