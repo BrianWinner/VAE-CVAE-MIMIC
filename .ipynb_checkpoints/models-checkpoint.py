@@ -55,8 +55,8 @@ class Encoder(nn.Module):
         super().__init__()
 
         self.conditional = conditional
-        if self.conditional:
-            layer_sizes[0] += num_labels
+        # if self.conditional:
+        #     layer_sizes[0] += num_labels
         
         self.lstm = nn.LSTM(input_size=layer_sizes[0], hidden_size=hidden, num_layers=1, batch_first=True)
         
@@ -72,10 +72,26 @@ class Encoder(nn.Module):
         # print("X info before LSTM")
         # print(type(x))
         # print(x.shape)
+        # # batch_size, 48, 76
         
         out, (ht, ct) = self.lstm(x)
         
+        # print("out info after LSTM")
+        # print(out.shape)
+        # # torch.Size([128, 48, bs])
+        
         out = ht[-1]
+#         print("Checking")
+#         print(ct.shape)
+#         # torch.Size([1, 128, bs])
+#         print(ht.shape)
+#         # torch.Size([1, 128, bs])
+#         print(out.shape)
+#         # torch.Size([128, bs])
+#         print(out[-1].shape)
+        
+#         print(out[-1])
+        
         
         # Need to account for varying lengths of sequences, brute selecting last col does not work
         # Padded sequences are also important (?)

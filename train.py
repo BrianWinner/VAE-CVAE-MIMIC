@@ -27,7 +27,7 @@ from sklearn.decomposition import PCA
 def load_data(config):
     print("Loading dataset")
 
-    dataset = IHMDataset(root='/data/datasets/mimic3-benchmarks/data/in-hospital-mortality', train=True, customListFile = 'train_listfile.csv')
+    dataset = IHMDataset(root='/data/datasets/mimic3-benchmarks/data/in-hospital-mortality', train=True, customListFile = 'train_listfile_CHF.csv')
     
     # dataset = LOSDataset(root='/data/datasets/mimic3-benchmarks/data/length-of-stay', train=True, n_samples = 1836, customListFile = 'train_listfile.csv')
     # dataset = PhenotypingDataset(root='/data/datasets/mimic3-benchmarks/data/phenotyping', train=True)
@@ -38,6 +38,8 @@ def load_data(config):
         dataset=dataset, batch_size=config["batchSize"], shuffle=True)
 
     print("finished dataloader initializing")
+    
+    print(dataset[0][0].size(), dataset[1][0].size())
     
     return data_loader
 
@@ -66,7 +68,7 @@ def train(config):
         latent_size=args.latent_size,
         decoder_layer_sizes=args.decoder_layer_sizes,
         conditional=args.conditional,
-        num_labels=10 if args.conditional else 0,
+        num_labels=2 if args.conditional else 0,
         hidden=config["hidden"],
         decode_hidden=config["decode_hidden"]).to(device)
     
@@ -85,8 +87,11 @@ def train(config):
         
         for iteration, (x, y, sl, m) in enumerate(data_loader):
             
+            # print(x.shape)
+            
             x, y = x.to(device), y.to(device)
-
+            y = y.to(torch.int64)
+            
             if args.conditional:
                 recon_x, mean, log_var, z = vae(x, y)
             else:
@@ -118,10 +123,11 @@ def train(config):
                     print("Epoch {:02d} Batch {:04d}/{:d}, Loss {:9.4f}".format(
                         epoch, iteration, len(data_loader)-1, loss.item()))
                 
-                if x.size(dim=0) != 1:
+                if (x.size(dim=0) != 1) and (not args.no_plots):
                     pca = PCA(n_components=2)
+                    # newZ = pca.fit_transform(z.detach().cpu().numpy())
                     newMean = pca.fit_transform(mean.detach().cpu().numpy())
-                    newVar = pca.fit_transform(log_var.detach().cpu().numpy())
+                    # newVar = pca.fit_transform(log_var.detach().cpu().numpy())
                     
                     # print(newMean.shape)
                     # newMean has shape of (8,2)
@@ -136,7 +142,7 @@ def train(config):
             session.report(
                 {"loss": loss.item()},
             )
-        else:
+        elif not args.no_plots:
             df = pd.DataFrame.from_dict(tracker_epoch, orient='index')
             g = sns.lmplot(
                 x='x', y='y', hue='label', data=df.groupby('label').head(300),
@@ -212,15 +218,11 @@ def main(args):
 if __name__ == '__main__':
     
     bs = 128
-    # bs = 1
-    # lr = 0.090703
     lr = 0.0005
-    ep = 10
-    # hd = 12
-    hd = 500
+    ep = 25
+    hd = 128
     kld = 0.00001
-    # d_hd = 56
-    d_hd = 500
+    d_hd = 128
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=0)
@@ -241,6 +243,7 @@ if __name__ == '__main__':
     
     parser.add_argument("--conditional", action='store_true')
     parser.add_argument("--tune", action='store_true')
+    parser.add_argument("--no_plots", action='store_true')
 
     args = parser.parse_args()
 
