@@ -42,13 +42,13 @@ def load_data(config):
     return data_loader
 
 def loss_fn(recon_x, x, mean, log_var, config):
-    loss = torch.nn.MSELoss()
+    loss = torch.nn.MSELoss(reduction='sum')
     lossActual = loss(x, recon_x)
 
-    KLD = config["kld"] * (-0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp()) ) / x.size(0)
+    KLD = config["kld"] * (-0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp()) ) 
     # Need to double check KLD calculation to see if correct, gotten from original VAE-CVAE repo
 
-    return (lossActual + KLD)
+    return (lossActual + KLD) / x.size(0)
 
 def train(config):
     torch.manual_seed(args.seed)
@@ -211,7 +211,7 @@ def main(args):
 
 if __name__ == '__main__':
     
-    bs = 8
+    bs = 128
     # bs = 1
     # lr = 0.090703
     lr = 0.0005
