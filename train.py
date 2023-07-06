@@ -43,7 +43,7 @@ def load_data(config):
     print("Finished dataset initializing")
     
     data_loader = DataLoader(
-        dataset=dataset, batch_size=config["batchSize"], shuffle=True)
+        dataset=dataset, batch_size=config["batchSize"], shuffle=False)
 
     print("finished dataloader initializing")
     
@@ -87,6 +87,8 @@ def train(config):
     epochRange = config["epochs"]
 
     logs = defaultdict(list)
+    
+    pred = []
     
     for epoch in range(epochRange):
 
@@ -137,9 +139,10 @@ def train(config):
                         tracker_epoch[id]['x'] = newZ[i, 0].item()
                         tracker_epoch[id]['y'] = newZ[i, 1].item()
                         tracker_epoch[id]['label'] = yi.item()
+                    # print(len(tracker_epoch))
         
         trackerdf = pd.DataFrame.from_dict(tracker_epoch, orient='index')
-        
+        # print(trackerdf.head(10))
         trackerdata = trackerdf.groupby('label').head(300)
         # print(trackerdata.head(10))
         trackerdata = trackerdata.drop(columns=['label'])
@@ -156,8 +159,8 @@ def train(config):
         elif not args.no_plots:
             df = pd.DataFrame.from_dict(tracker_epoch, orient='index')
             data = df.groupby('label').head(300)
-            data['pred'] = pred
-            print(df.head(5))
+            data.insert(3, 'pred', pred)
+            # print(data.head(5))
             g = sns.lmplot(
                 x='x', y='y', hue='pred', data=data,
                 fit_reg=False, legend=True)
@@ -165,6 +168,30 @@ def train(config):
                 args.fig_root, "E{:d}-Dist.png".format(epoch)),
                 dpi=300)
     
+    print(len(pred))
+    
+    cluster0 = []
+    cluster1 = []
+    numPred = len(pred)
+    count = 0
+    for iteration, (x, y, sl, m) in enumerate(data_loader):
+        
+        if count == numPred:
+            break
+        batchCount = 0
+        for i, yi in enumerate(y):
+            if pred[count] == 0:
+                cluster0.append(x[batchCount])
+            else:
+                cluster1.append(x[batchCount])
+            count += 1
+            if count == numPred:
+                break
+    print(len(cluster0), len(cluster1))
+    
+    result = stats.ttest_ind(cluster0, cluster1)
+    print(result.pvalue)
+        
 def main(args):
     if args.tune:
         print("Tuning!!!")
