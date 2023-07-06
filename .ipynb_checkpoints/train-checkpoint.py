@@ -23,11 +23,19 @@ from models import VAE
 
 from sklearn.manifold import TSNE
 from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+
+import numpy as np
+from scipy import stats
 
 def load_data(config):
     print("Loading dataset")
 
-    dataset = IHMDataset(root='/data/datasets/mimic3-benchmarks/data/in-hospital-mortality', train=True, customListFile = 'train_listfile_CHF.csv')
+    dataset = IHMDataset(root='/data/datasets/mimic3-benchmarks/data/in-hospital-mortality', train=True, customListFile = 'train_listfile.csv')
+    
+    print("Listfile done")
+    
+    # dataset_test = IHMDataset(root='/data/datasets/mimic3-benchmarks/data/in-hospital-mortality', train=False, customListFile = 'test_listfile.csv')
     
     # dataset = LOSDataset(root='/data/datasets/mimic3-benchmarks/data/length-of-stay', train=True, n_samples = 1836, customListFile = 'train_listfile.csv')
     # dataset = PhenotypingDataset(root='/data/datasets/mimic3-benchmarks/data/phenotyping', train=True)
@@ -39,7 +47,7 @@ def load_data(config):
 
     print("finished dataloader initializing")
     
-    print(dataset[0][0].size(), dataset[1][0].size())
+    # print(dataset[0][0].size(), dataset[1][0].size())
     
     return data_loader
 
@@ -73,10 +81,9 @@ def train(config):
         decode_hidden=config["decode_hidden"]).to(device)
     
     optimizer = torch.optim.Adam(vae.parameters(), lr=config["lr"])
-    # optimizer = torch.optim.RMSprop(vae.parameters(), lr=0.0003, momentum=0.1, alpha=0.001)
     
     # print("Epochs: {:02d} Batch Size: {:02d} Learning Rate: {:.4f}".format(config["epochs"], config["batchSize"], config["lr"]))
-    
+
     epochRange = config["epochs"]
 
     logs = defaultdict(list)
@@ -97,15 +104,8 @@ def train(config):
             else:
                 recon_x, mean, log_var, z = vae(x)
             
-#             print("Z Shape")
-#             print(z.shape)
-            
-#             print(mean.shape)
-#             print(log_var.shape)
-#             print(recon_x.shape)
-            
             # Z, mean, and log_var all have size of ([batch_size, hidden size])
-            
+             
             #CALCULATE LOSS
             loss = loss_fn(recon_x, x, mean, log_var, config)
 
@@ -125,8 +125,8 @@ def train(config):
                 
                 if (x.size(dim=0) != 1) and (not args.no_plots):
                     pca = PCA(n_components=2)
-                    # newZ = pca.fit_transform(z.detach().cpu().numpy())
-                    newMean = pca.fit_transform(mean.detach().cpu().numpy())
+                    newZ = pca.fit_transform(z.detach().cpu().numpy())
+                    # newMean = pca.fit_transform(mean.detach().cpu().numpy())
                     # newVar = pca.fit_transform(log_var.detach().cpu().numpy())
                     
                     # print(newMean.shape)
@@ -134,9 +134,20 @@ def train(config):
 
                     for i, yi in enumerate(y):
                         id = len(tracker_epoch)
-                        tracker_epoch[id]['x'] = newMean[i, 0].item()
-                        tracker_epoch[id]['y'] = newMean[i, 1].item()
+                        tracker_epoch[id]['x'] = newZ[i, 0].item()
+                        tracker_epoch[id]['y'] = newZ[i, 1].item()
                         tracker_epoch[id]['label'] = yi.item()
+        
+        trackerdf = pd.DataFrame.from_dict(tracker_epoch, orient='index')
+        
+        trackerdata = trackerdf.groupby('label').head(300)
+        # print(trackerdata.head(10))
+        trackerdata = trackerdata.drop(columns=['label'])
+        
+        
+        kmeans = KMeans(n_clusters=2, n_init='auto')
+        pred = kmeans.fit_predict(trackerdata)
+        # print(pred)
         
         if args.tune:
             session.report(
@@ -144,8 +155,11 @@ def train(config):
             )
         elif not args.no_plots:
             df = pd.DataFrame.from_dict(tracker_epoch, orient='index')
+            data = df.groupby('label').head(300)
+            data['pred'] = pred
+            print(df.head(5))
             g = sns.lmplot(
-                x='x', y='y', hue='label', data=df.groupby('label').head(300),
+                x='x', y='y', hue='pred', data=data,
                 fit_reg=False, legend=True)
             g.savefig(os.path.join(
                 args.fig_root, "E{:d}-Dist.png".format(epoch)),
@@ -225,7 +239,7 @@ if __name__ == '__main__':
     d_hd = 128
     
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--seed", type=int, default=42)
     
     parser.add_argument("--epochs", type=int, default=ep)
     parser.add_argument("--batch_size", type=int, default=bs)
