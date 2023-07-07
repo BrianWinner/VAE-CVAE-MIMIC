@@ -168,14 +168,10 @@ def train(config):
                 args.fig_root, "E{:d}-Dist.png".format(epoch)),
                 dpi=300)
     
-    print(len(pred))
-    
-    # cluster0 = np.empty([48,76], dtype=object)
-    # cluster1 = np.empty([48,76], dtype=object)
-    cluster0 = []
-    cluster1 = []
     numPred = len(pred)
     count = 0
+    cluster0 = np.empty([48,76])
+    cluster1 = np.empty([48,76])
     for iteration, (x, y, sl, m) in enumerate(data_loader):
         
         if count == numPred:
@@ -184,34 +180,29 @@ def train(config):
         for i, yi in enumerate(y):
             # print(type(x[batchCount]))
             # print(x[batchCount].shape)
-            if pred[count] == 0:
-                cluster0.append(x[batchCount].numpy())
-                # np.append(cluster0, x[batchCount])
+            if count == 0:
+                if pred[count] == 0:
+                    cluster0 = x[batchCount].numpy()
+                else:
+                    cluster1 = x[batchCount].numpy()
             else:
-                cluster1.append(x[batchCount].numpy())
-                # np.append(cluster1, x[batchCount])
+                if pred[count] == 0:
+                    cluster0 = np.concatenate((cluster0, x[batchCount].numpy()), axis=0)
+                else:
+                    cluster1 = np.concatenate((cluster1, x[batchCount].numpy()), axis=0)
+            # print(cluster0.shape, cluster1.shape)
             batchCount += 1
             count += 1
             if count == numPred:
                 break
     
-    # print(len(cluster0), len(cluster1))
-    # print(cluster0[0].shape)
+    print(cluster0.shape, cluster1.shape)
     
     print("Going into ttest")
     
     result = stats.ttest_ind(cluster0, cluster1)
-    # print(result.pvalue.shape)
-    # print(result.pvalue)
-    
-    # Prints feature's pvalue over time
-    for i in range(5):
-        if not np.isnan(result.pvalue[:,i]).any():
-            print("Feature Index: ", i)
-            col = result.pvalue[:,i]
-            
-            # print(result.pvalue[:,i])
-        
+    print(result.pvalue.shape)
+    print(result.pvalue)        
         
 def main(args):
     if args.tune:
