@@ -170,6 +170,8 @@ def train(config):
     
     print(len(pred))
     
+    # cluster0 = np.empty([48,76], dtype=object)
+    # cluster1 = np.empty([48,76], dtype=object)
     cluster0 = []
     cluster1 = []
     numPred = len(pred)
@@ -180,17 +182,36 @@ def train(config):
             break
         batchCount = 0
         for i, yi in enumerate(y):
+            # print(type(x[batchCount]))
+            # print(x[batchCount].shape)
             if pred[count] == 0:
-                cluster0.append(x[batchCount])
+                cluster0.append(x[batchCount].numpy())
+                # np.append(cluster0, x[batchCount])
             else:
-                cluster1.append(x[batchCount])
+                cluster1.append(x[batchCount].numpy())
+                # np.append(cluster1, x[batchCount])
+            batchCount += 1
             count += 1
             if count == numPred:
                 break
-    print(len(cluster0), len(cluster1))
+    
+    # print(len(cluster0), len(cluster1))
+    # print(cluster0[0].shape)
+    
+    print("Going into ttest")
     
     result = stats.ttest_ind(cluster0, cluster1)
-    print(result.pvalue)
+    # print(result.pvalue.shape)
+    # print(result.pvalue)
+    
+    # Prints feature's pvalue over time
+    for i in range(5):
+        if not np.isnan(result.pvalue[:,i]).any():
+            print("Feature Index: ", i)
+            col = result.pvalue[:,i]
+            
+            # print(result.pvalue[:,i])
+        
         
 def main(args):
     if args.tune:
