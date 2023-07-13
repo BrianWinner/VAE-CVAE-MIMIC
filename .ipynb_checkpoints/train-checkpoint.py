@@ -33,6 +33,9 @@ import shap
 import sklearn
 from sklearn.model_selection import train_test_split
 
+from sklearn.covariance import EmpiricalCovariance
+from sklearn.covariance import MinCovDet
+
 def load_data(config):
     print("Loading dataset")
 
@@ -112,6 +115,7 @@ def train(config):
                 recon_x, mean, log_var, z = vae(x)
             
             # Z, mean, and log_var all have size of ([batch_size, hidden size])
+            # print(z.shape)
             
             reconx = recon_x
              
@@ -140,13 +144,33 @@ def train(config):
                     
                     # print(newMean.shape)
                     # newMean has shape of (8,2)
-
+                    
+                    print(newZ.shape)
+                    
+                    cov = MinCovDet().fit(newZ[:,:])
+                    mahalanobis = cov.mahalanobis(newZ[:,:])
+                    
+                    print(type(mahalanobis))
+                    print(mahalanobis.shape)
+                    print(mahalanobis)
+                    
+                    colors = [plt.cm.jet(float(i)/max(mahalanobis)) for i in mahalanobis]
+                    fig = plt.figure(figsize=(8,6))
+                    with plt.style.context(('ggplot')):
+                        plt.scatter(newZ[:,0], newZ[:,1], c=colors, edgecolors='k', s=60)
+                        plt.xlabel('PC1')
+                        plt.ylabel('PC2')
+                        plt.title('Outlier Color Coding')
+                    fig.savefig('mahalanobis.png')
+                    print("Plot done")
+                    
                     for i, yi in enumerate(y):
                         id = len(tracker_epoch)
                         tracker_epoch[id]['x'] = newZ[i, 0].item()
                         tracker_epoch[id]['y'] = newZ[i, 1].item()
                         tracker_epoch[id]['label'] = yi.item()
                     # print(len(tracker_epoch))
+                    break
         
         if args.tune:
             session.report(
@@ -177,33 +201,36 @@ def train(config):
             
     # END OF EPOCH LOOP
     
-    background = None
-    train = None
-    testPred = None
-    for iteration, (x, y, sl, m) in enumerate(data_loader):
-        background = x[:100]
-        train = x
-        break
-    for iteration, (x, y, sl, m) in enumerate(data_loader_test):
-        testPred = x
-        break
-    print(type(reconx))
-    print(reconx.shape)
-    print(type(train))
-    print(train.shape)
-    reconx = reconx.detach().numpy()
-    train = train.detach().numpy()
-    print(type(reconx))
-    print(reconx.shape)
-    print(type(train))
-    print(train.shape)
-    explainer = shap.KernelExplainer(reconx, train)
-    print("Explainer complete")
     
-    shapVals = explainer.shap_values(testPred)
-    shap.initjs()
-    # shap.force_plot(explainer.expected_value[0], shapVals[0][0])
-    shap.force_plot(explainer.expected_value[0], shapVals[0][0,:], testPred.iloc[0,:], matplotlib=True, show=False).savefig('test.png')
+
+
+#     background = None
+#     train = None
+#     testPred = None
+#     for iteration, (x, y, sl, m) in enumerate(data_loader):
+#         background = x[:100]
+#         train = x
+#         break
+#     for iteration, (x, y, sl, m) in enumerate(data_loader_test):
+#         testPred = x
+#         break
+#     print(type(reconx))
+#     print(reconx.shape)
+#     print(type(train))
+#     print(train.shape)
+#     reconx = reconx.detach().numpy()
+#     train = train.detach().numpy()
+#     print(type(reconx))
+#     print(reconx.shape)
+#     print(type(train))
+#     print(train.shape)
+#     explainer = shap.KernelExplainer(reconx, train)
+#     print("Explainer complete")
+    
+#     shapVals = explainer.shap_values(testPred)
+#     shap.initjs()
+#     # shap.force_plot(explainer.expected_value[0], shapVals[0][0])
+#     shap.force_plot(explainer.expected_value[0], shapVals[0][0,:], testPred.iloc[0,:], matplotlib=True, show=False).savefig('test.png')
 
 
 # BELOW IS EXAMPLE OF KERNEL SHAP
