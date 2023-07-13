@@ -28,14 +28,16 @@ from sklearn.cluster import KMeans
 import numpy as np
 from scipy import stats
 
+from statsmodels.tsa.arima.model import ARIMA
+import shap
+import sklearn
+from sklearn.model_selection import train_test_split
+
 def load_data(config):
     print("Loading dataset")
 
     dataset = IHMDataset(root='/data/datasets/mimic3-benchmarks/data/in-hospital-mortality', train=True, customListFile = 'train_listfile.csv')
-    
-    print("Listfile done")
-    
-    # dataset_test = IHMDataset(root='/data/datasets/mimic3-benchmarks/data/in-hospital-mortality', train=False, customListFile = 'test_listfile.csv')
+    dataset_test = IHMDataset(root='/data/datasets/mimic3-benchmarks/data/in-hospital-mortality', train=False, customListFile = 'test_listfile.csv')
     
     # dataset = LOSDataset(root='/data/datasets/mimic3-benchmarks/data/length-of-stay', train=True, n_samples = 1836, customListFile = 'train_listfile.csv')
     # dataset = PhenotypingDataset(root='/data/datasets/mimic3-benchmarks/data/phenotyping', train=True)
@@ -44,12 +46,16 @@ def load_data(config):
     
     data_loader = DataLoader(
         dataset=dataset, batch_size=config["batchSize"], shuffle=False)
+    
+    data_loader_test = DataLoader(
+        dataset=dataset_test, batch_size=config["batchSize"], shuffle=False)
 
     print("finished dataloader initializing")
     
     # print(dataset[0][0].size(), dataset[1][0].size())
     
-    return data_loader
+    
+    return data_loader, data_loader_test
 
 def loss_fn(recon_x, x, mean, log_var, config):
     loss = torch.nn.MSELoss(reduction='sum')
@@ -65,11 +71,12 @@ def train(config):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(args.seed)
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cpu')
+    
     ts = time.time()
     
-    data_loader = load_data(config)
+    data_loader, data_loader_test = load_data(config)
     
     vae = VAE(
         encoder_layer_sizes=args.encoder_layer_sizes,
@@ -81,8 +88,6 @@ def train(config):
         decode_hidden=config["decode_hidden"]).to(device)
     
     optimizer = torch.optim.Adam(vae.parameters(), lr=config["lr"])
-    
-    # print("Epochs: {:02d} Batch Size: {:02d} Learning Rate: {:.4f}".format(config["epochs"], config["batchSize"], config["lr"]))
 
     epochRange = config["epochs"]
 
@@ -90,16 +95,16 @@ def train(config):
     
     pred = []
     
+    reconx = None
+    
     for epoch in range(epochRange):
 
         tracker_epoch = defaultdict(lambda: defaultdict(dict))
         
         for iteration, (x, y, sl, m) in enumerate(data_loader):
             
-            # print(x.shape)
-            
-            x, y = x.to(device), y.to(device)
             y = y.to(torch.int64)
+            x, y = x.to(device), y.to(device)
             
             if args.conditional:
                 recon_x, mean, log_var, z = vae(x, y)
@@ -107,6 +112,8 @@ def train(config):
                 recon_x, mean, log_var, z = vae(x)
             
             # Z, mean, and log_var all have size of ([batch_size, hidden size])
+            
+            reconx = recon_x
              
             #CALCULATE LOSS
             loss = loss_fn(recon_x, x, mean, log_var, config)
@@ -141,22 +148,22 @@ def train(config):
                         tracker_epoch[id]['label'] = yi.item()
                     # print(len(tracker_epoch))
         
-        trackerdf = pd.DataFrame.from_dict(tracker_epoch, orient='index')
-        # print(trackerdf.head(10))
-        trackerdata = trackerdf.groupby('label').head(300)
-        # print(trackerdata.head(10))
-        trackerdata = trackerdata.drop(columns=['label'])
-        
-        
-        kmeans = KMeans(n_clusters=2, n_init='auto')
-        pred = kmeans.fit_predict(trackerdata)
-        # print(pred)
-        
         if args.tune:
             session.report(
                 {"loss": loss.item()},
             )
         elif not args.no_plots:
+            trackerdf = pd.DataFrame.from_dict(tracker_epoch, orient='index')
+            # print(trackerdf.head(10))
+            trackerdata = trackerdf.groupby('label').head(300)
+            # print(trackerdata.head(10))
+            trackerdata = trackerdata.drop(columns=['label'])
+
+
+            kmeans = KMeans(n_clusters=2, n_init='auto')
+            pred = kmeans.fit_predict(trackerdata)
+            # print(pred)
+        
             df = pd.DataFrame.from_dict(tracker_epoch, orient='index')
             data = df.groupby('label').head(300)
             data.insert(3, 'pred', pred)
@@ -167,43 +174,103 @@ def train(config):
             g.savefig(os.path.join(
                 args.fig_root, "E{:d}-Dist.png".format(epoch)),
                 dpi=300)
+            
+    # END OF EPOCH LOOP
     
-    numPred = len(pred)
-    count = 0
-    cluster0 = np.empty([48,76])
-    cluster1 = np.empty([48,76])
+    background = None
+    train = None
+    testPred = None
     for iteration, (x, y, sl, m) in enumerate(data_loader):
+        background = x[:100]
+        train = x
+        break
+    for iteration, (x, y, sl, m) in enumerate(data_loader_test):
+        testPred = x
+        break
+    print(type(reconx))
+    print(reconx.shape)
+    print(type(train))
+    print(train.shape)
+    reconx = reconx.detach().numpy()
+    train = train.detach().numpy()
+    print(type(reconx))
+    print(reconx.shape)
+    print(type(train))
+    print(train.shape)
+    explainer = shap.KernelExplainer(reconx, train)
+    print("Explainer complete")
+    
+    shapVals = explainer.shap_values(testPred)
+    shap.initjs()
+    # shap.force_plot(explainer.expected_value[0], shapVals[0][0])
+    shap.force_plot(explainer.expected_value[0], shapVals[0][0,:], testPred.iloc[0,:], matplotlib=True, show=False).savefig('test.png')
+
+
+# BELOW IS EXAMPLE OF KERNEL SHAP
+#     # print the JS visualization code to the notebook
+#     shap.initjs()
+
+#     # train a SVM classifier
+#     X_train,X_test,Y_train,Y_test = train_test_split(*shap.datasets.iris(), test_size=0.2, random_state=0)
+#     svm = sklearn.svm.SVC(kernel='rbf', probability=True)
+#     svm.fit(X_train, Y_train)
+
+#     # use Kernel SHAP to explain test set predictions
+#     probas = svm.predict_proba
+#     explainer = shap.KernelExplainer(probas, X_train, link="logit")
+#     shap_values = explainer.shap_values(X_test, nsamples=100)
+
+#     # plot the SHAP values for the Setosa output of the first instance
+#     print("Plotting")
+#     shap.force_plot(explainer.expected_value[0], shap_values[0][0,:], X_test.iloc[0,:], matplotlib=True, show=False).savefig('test.png')
+#     print("Done plotting")
+
+# END OF EXAMPLE OF KERNEL SHAP    
+  
+
+#     numPred = len(pred)
+#     count = 0
+#     cluster0 = np.empty([48,76])
+#     cluster1 = np.empty([48,76])
+#     for iteration, (x, y, sl, m) in enumerate(data_loader):
         
-        if count == numPred:
-            break
-        batchCount = 0
-        for i, yi in enumerate(y):
-            # print(type(x[batchCount]))
-            # print(x[batchCount].shape)
-            if count == 0:
-                if pred[count] == 0:
-                    cluster0 = x[batchCount].numpy()
-                else:
-                    cluster1 = x[batchCount].numpy()
-            else:
-                if pred[count] == 0:
-                    cluster0 = np.concatenate((cluster0, x[batchCount].numpy()), axis=0)
-                else:
-                    cluster1 = np.concatenate((cluster1, x[batchCount].numpy()), axis=0)
-            # print(cluster0.shape, cluster1.shape)
-            batchCount += 1
-            count += 1
-            if count == numPred:
-                break
+#         if count == numPred:
+#             break
+#         batchCount = 0
+#         for i, yi in enumerate(y):
+#             # print(type(x[batchCount]))
+#             # print(x[batchCount].shape)
+#             if count == 0:
+#                 if pred[count] == 0:
+#                     cluster0 = x[batchCount].numpy()
+#                 else:
+#                     cluster1 = x[batchCount].numpy()
+#             else:
+#                 if pred[count] == 0:
+#                     cluster0 = np.concatenate((cluster0, x[batchCount].numpy()), axis=0)
+#                 else:
+#                     cluster1 = np.concatenate((cluster1, x[batchCount].numpy()), axis=0)
+#             # print(cluster0.shape, cluster1.shape)
+#             batchCount += 1
+#             count += 1
+#             if count == numPred:
+#                 break
     
-    print(cluster0.shape, cluster1.shape)
+#     print(cluster0.shape, cluster1.shape)
     
-    print("Going into ttest")
+#     print("Going into ttest")
     
-    result = stats.ttest_ind(cluster0, cluster1)
-    print(result.pvalue.shape)
-    print(result.pvalue)        
-        
+#     result = stats.ttest_ind(cluster0, cluster1)
+#     print(result.pvalue.shape)
+    # print(result.pvalue)        
+    
+    # for ind, val in enumerate(result.pvalue):
+    #     # print("Feature index: ", ind, " || P-value: ", val)
+    #     if (val >= 0.05):
+    #         print("Feature index: ", ind, " || P-value: ", val)
+    
+    
+    
 def main(args):
     if args.tune:
         print("Tuning!!!")
