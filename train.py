@@ -35,6 +35,7 @@ from sklearn.model_selection import train_test_split
 
 from sklearn.covariance import EmpiricalCovariance
 from sklearn.covariance import MinCovDet
+from scipy.stats import chi2
 
 def load_data(config):
     print("Loading dataset")
@@ -114,10 +115,35 @@ def train(config):
             else:
                 recon_x, mean, log_var, z = vae(x)
             
+            reconx = recon_x
+            
             # Z, mean, and log_var all have size of ([batch_size, hidden size])
             # print(z.shape)
+            # print(z[0])
             
-            reconx = recon_x
+            cov = MinCovDet().fit(z.detach().numpy())
+            mahalanobis = cov.mahalanobis(z.detach().numpy())
+
+            print(type(mahalanobis))
+            print(mahalanobis.shape)
+            print(mahalanobis)
+
+            pVals = 1 - chi2.cdf(mahalanobis, 128 - 1)
+            # Formula for p values is correct
+            
+            print(type(pVals))
+            print(pVals.shape)
+            print(pVals)
+
+            # colors = [plt.cm.jet(float(i)/max(mahalanobis)) for i in mahalanobis]
+            # fig = plt.figure(figsize=(8,6))
+            # with plt.style.context(('ggplot')):
+            #     plt.scatter(z.detach().numpy(), z.detach().numpy(), c=colors, edgecolors='k', s=60)
+            #     plt.xlabel('x')
+            #     plt.ylabel('y')
+            #     plt.title('Outlier Color Coding')
+            # fig.savefig('mahalanobis.png')
+            # print("Plot done")
              
             #CALCULATE LOSS
             loss = loss_fn(recon_x, x, mean, log_var, config)
@@ -145,32 +171,12 @@ def train(config):
                     # print(newMean.shape)
                     # newMean has shape of (8,2)
                     
-                    print(newZ.shape)
-                    
-                    cov = MinCovDet().fit(newZ[:,:])
-                    mahalanobis = cov.mahalanobis(newZ[:,:])
-                    
-                    print(type(mahalanobis))
-                    print(mahalanobis.shape)
-                    print(mahalanobis)
-                    
-                    colors = [plt.cm.jet(float(i)/max(mahalanobis)) for i in mahalanobis]
-                    fig = plt.figure(figsize=(8,6))
-                    with plt.style.context(('ggplot')):
-                        plt.scatter(newZ[:,0], newZ[:,1], c=colors, edgecolors='k', s=60)
-                        plt.xlabel('PC1')
-                        plt.ylabel('PC2')
-                        plt.title('Outlier Color Coding')
-                    fig.savefig('mahalanobis.png')
-                    print("Plot done")
-                    
                     for i, yi in enumerate(y):
                         id = len(tracker_epoch)
                         tracker_epoch[id]['x'] = newZ[i, 0].item()
                         tracker_epoch[id]['y'] = newZ[i, 1].item()
                         tracker_epoch[id]['label'] = yi.item()
                     # print(len(tracker_epoch))
-                    break
         
         if args.tune:
             session.report(
