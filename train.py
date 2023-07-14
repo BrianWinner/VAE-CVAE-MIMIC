@@ -39,9 +39,10 @@ from scipy.stats import chi2
 
 def load_data(config):
     print("Loading dataset")
-
+    
+    dataset_test = None
     dataset = IHMDataset(root='/data/datasets/mimic3-benchmarks/data/in-hospital-mortality', train=True, customListFile = 'train_listfile.csv')
-    dataset_test = IHMDataset(root='/data/datasets/mimic3-benchmarks/data/in-hospital-mortality', train=False, customListFile = 'test_listfile.csv')
+    # dataset_test = IHMDataset(root='/data/datasets/mimic3-benchmarks/data/in-hospital-mortality', train=False, customListFile = 'test_listfile.csv')
     
     # dataset = LOSDataset(root='/data/datasets/mimic3-benchmarks/data/length-of-stay', train=True, n_samples = 1836, customListFile = 'train_listfile.csv')
     # dataset = PhenotypingDataset(root='/data/datasets/mimic3-benchmarks/data/phenotyping', train=True)
@@ -121,29 +122,49 @@ def train(config):
             # print(z.shape)
             # print(z[0])
             
-            cov = MinCovDet().fit(z.detach().numpy())
-            mahalanobis = cov.mahalanobis(z.detach().numpy())
+            # CHECK TO SEE IF THIS IS CORRECTLY CALCULATING AND SUBTRACTING MEANS
+            df = pd.DataFrame(z.detach().numpy())
+            # print(df.shape)
+            # print(df.iloc[0,0])
+            
+            # print(df.iloc[:,0].shape)
+            
+            # print(np.mean(df.iloc[:,0]))
+            for ind in range(df.shape[1]):
+                df.iloc[:,ind] = df.iloc[:,ind] - np.mean(df.iloc[:,ind])
+            diff_mean = df
+            # print(diff_mean.shape)
+            # print(diff_mean.iloc[0,0])
+            
+            covmat = np.cov(z.detach().numpy().T)
+            # covmat = np.diag(np.ones(64))
+            # print(covmat)
+            invcovmat = np.linalg.inv(covmat)
+            right = np.dot(diff_mean, invcovmat)
+            mahamat = np.dot(right, diff_mean.T)
+            # mahalanobis = np.diag(mahamat)
+            mahalanobis = np.diag(mahamat)
+            # ABOVE CALCULATES SQUARED MAHALANOBIS DISTANCE
+            
+            # cov = MinCovDet().fit(z.detach().numpy())
+            # mahalanobis = cov.mahalanobis(z.detach().numpy())
+            
+            # print(type(mahalanobis))
+            # print(mahalanobis.shape)
+            # print(mahalanobis)
 
-            print(type(mahalanobis))
-            print(mahalanobis.shape)
-            print(mahalanobis)
-
-            pVals = 1 - chi2.cdf(mahalanobis, 128 - 1)
+            pVals = 1 - chi2.cdf(mahalanobis, config["hidden"] - 1)
             # Formula for p values is correct
             
-            print(type(pVals))
-            print(pVals.shape)
-            print(pVals)
-
-            # colors = [plt.cm.jet(float(i)/max(mahalanobis)) for i in mahalanobis]
-            # fig = plt.figure(figsize=(8,6))
-            # with plt.style.context(('ggplot')):
-            #     plt.scatter(z.detach().numpy(), z.detach().numpy(), c=colors, edgecolors='k', s=60)
-            #     plt.xlabel('x')
-            #     plt.ylabel('y')
-            #     plt.title('Outlier Color Coding')
-            # fig.savefig('mahalanobis.png')
-            # print("Plot done")
+            # print(type(pVals))
+            # print(pVals.shape)
+            # print(pVals)
+            
+            significant = []
+            for i, val in enumerate(pVals):
+                if val <= 0.001:
+                    significant.append(i)
+            print(len(significant))
              
             #CALCULATE LOSS
             loss = loss_fn(recon_x, x, mean, log_var, config)
@@ -171,13 +192,44 @@ def train(config):
                     # print(newMean.shape)
                     # newMean has shape of (8,2)
                     
+#                     cov = MinCovDet().fit(newZ)
+#                     mahalanobis = cov.mahalanobis(newZ)
+
+#                     print(type(mahalanobis))
+#                     print(mahalanobis.shape)
+#                     print(mahalanobis)
+
+#                     pVals = 1 - chi2.cdf(mahalanobis, 2 - 1)
+#                     # Formula for p values is correct
+
+#                     print(type(pVals))
+#                     print(pVals.shape)
+#                     print(pVals)
+                    
+#                     significant = []
+#                     for i, val in enumerate(pVals):
+#                         if val <= 0.001:
+#                             significant.append(i)
+#                     print(len(significant))
+
+#                     colors = [plt.cm.jet(float(i)/max(mahalanobis)) for i in mahalanobis]
+#                     fig = plt.figure(figsize=(8,6))
+#                     with plt.style.context(('ggplot')):
+#                         plt.scatter(newZ[:,0], newZ[:,1], c=colors, edgecolors='k', s=60)
+#                         plt.xlabel('x')
+#                         plt.ylabel('y')
+#                         plt.title('Outlier Color Coding')
+#                     fig.savefig('mahalanobis.png')
+#                     print("Plot done")
+                    
                     for i, yi in enumerate(y):
                         id = len(tracker_epoch)
                         tracker_epoch[id]['x'] = newZ[i, 0].item()
                         tracker_epoch[id]['y'] = newZ[i, 1].item()
                         tracker_epoch[id]['label'] = yi.item()
                     # print(len(tracker_epoch))
-        
+            break
+                    
         if args.tune:
             session.report(
                 {"loss": loss.item()},
@@ -206,101 +258,6 @@ def train(config):
                 dpi=300)
             
     # END OF EPOCH LOOP
-    
-    
-
-
-#     background = None
-#     train = None
-#     testPred = None
-#     for iteration, (x, y, sl, m) in enumerate(data_loader):
-#         background = x[:100]
-#         train = x
-#         break
-#     for iteration, (x, y, sl, m) in enumerate(data_loader_test):
-#         testPred = x
-#         break
-#     print(type(reconx))
-#     print(reconx.shape)
-#     print(type(train))
-#     print(train.shape)
-#     reconx = reconx.detach().numpy()
-#     train = train.detach().numpy()
-#     print(type(reconx))
-#     print(reconx.shape)
-#     print(type(train))
-#     print(train.shape)
-#     explainer = shap.KernelExplainer(reconx, train)
-#     print("Explainer complete")
-    
-#     shapVals = explainer.shap_values(testPred)
-#     shap.initjs()
-#     # shap.force_plot(explainer.expected_value[0], shapVals[0][0])
-#     shap.force_plot(explainer.expected_value[0], shapVals[0][0,:], testPred.iloc[0,:], matplotlib=True, show=False).savefig('test.png')
-
-
-# BELOW IS EXAMPLE OF KERNEL SHAP
-#     # print the JS visualization code to the notebook
-#     shap.initjs()
-
-#     # train a SVM classifier
-#     X_train,X_test,Y_train,Y_test = train_test_split(*shap.datasets.iris(), test_size=0.2, random_state=0)
-#     svm = sklearn.svm.SVC(kernel='rbf', probability=True)
-#     svm.fit(X_train, Y_train)
-
-#     # use Kernel SHAP to explain test set predictions
-#     probas = svm.predict_proba
-#     explainer = shap.KernelExplainer(probas, X_train, link="logit")
-#     shap_values = explainer.shap_values(X_test, nsamples=100)
-
-#     # plot the SHAP values for the Setosa output of the first instance
-#     print("Plotting")
-#     shap.force_plot(explainer.expected_value[0], shap_values[0][0,:], X_test.iloc[0,:], matplotlib=True, show=False).savefig('test.png')
-#     print("Done plotting")
-
-# END OF EXAMPLE OF KERNEL SHAP    
-  
-
-#     numPred = len(pred)
-#     count = 0
-#     cluster0 = np.empty([48,76])
-#     cluster1 = np.empty([48,76])
-#     for iteration, (x, y, sl, m) in enumerate(data_loader):
-        
-#         if count == numPred:
-#             break
-#         batchCount = 0
-#         for i, yi in enumerate(y):
-#             # print(type(x[batchCount]))
-#             # print(x[batchCount].shape)
-#             if count == 0:
-#                 if pred[count] == 0:
-#                     cluster0 = x[batchCount].numpy()
-#                 else:
-#                     cluster1 = x[batchCount].numpy()
-#             else:
-#                 if pred[count] == 0:
-#                     cluster0 = np.concatenate((cluster0, x[batchCount].numpy()), axis=0)
-#                 else:
-#                     cluster1 = np.concatenate((cluster1, x[batchCount].numpy()), axis=0)
-#             # print(cluster0.shape, cluster1.shape)
-#             batchCount += 1
-#             count += 1
-#             if count == numPred:
-#                 break
-    
-#     print(cluster0.shape, cluster1.shape)
-    
-#     print("Going into ttest")
-    
-#     result = stats.ttest_ind(cluster0, cluster1)
-#     print(result.pvalue.shape)
-    # print(result.pvalue)        
-    
-    # for ind, val in enumerate(result.pvalue):
-    #     # print("Feature index: ", ind, " || P-value: ", val)
-    #     if (val >= 0.05):
-    #         print("Feature index: ", ind, " || P-value: ", val)
     
     
     
