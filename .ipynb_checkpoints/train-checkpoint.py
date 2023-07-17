@@ -102,6 +102,8 @@ def train(config):
     
     reconx = None
     
+    graphCount = 0
+    
     for epoch in range(epochRange):
 
         tracker_epoch = defaultdict(lambda: defaultdict(dict))
@@ -137,13 +139,19 @@ def train(config):
             # print(diff_mean.iloc[0,0])
             
             covmat = np.cov(z.detach().numpy().T)
-            # covmat = np.diag(np.ones(64))
+            # Transposed due to numpy covariance parameter input being inverted for rows/cols
+            
             # print(covmat)
             invcovmat = np.linalg.inv(covmat)
             right = np.dot(diff_mean, invcovmat)
             mahamat = np.dot(right, diff_mean.T)
-            # mahalanobis = np.diag(mahamat)
             mahalanobis = np.diag(mahamat)
+            
+            # print(type(mahamat))
+            # print(mahamat.shape)
+            # print(type(mahalanobis))
+            # print(mahalanobis.shape)
+            
             # ABOVE CALCULATES SQUARED MAHALANOBIS DISTANCE
             
             # cov = MinCovDet().fit(z.detach().numpy())
@@ -162,9 +170,19 @@ def train(config):
             
             significant = []
             for i, val in enumerate(pVals):
-                if val <= 0.001:
+                if val <= 0.0001:
                     significant.append(i)
-            print(len(significant))
+            # print(len(significant))
+            
+            if len(significant) == 128 or graphCount == 0:
+                graphCount = 1
+                print(type(mahalanobis))
+                print(mahalanobis.shape)
+                print(mahalanobis)
+
+                print(type(pVals))
+                print(pVals.shape)
+                print(pVals)
              
             #CALCULATE LOSS
             loss = loss_fn(recon_x, x, mean, log_var, config)
@@ -192,35 +210,48 @@ def train(config):
                     # print(newMean.shape)
                     # newMean has shape of (8,2)
                     
-#                     cov = MinCovDet().fit(newZ)
-#                     mahalanobis = cov.mahalanobis(newZ)
-
-#                     print(type(mahalanobis))
-#                     print(mahalanobis.shape)
-#                     print(mahalanobis)
-
-#                     pVals = 1 - chi2.cdf(mahalanobis, 2 - 1)
-#                     # Formula for p values is correct
-
-#                     print(type(pVals))
-#                     print(pVals.shape)
-#                     print(pVals)
+                    df = pd.DataFrame(newZ)
                     
-#                     significant = []
-#                     for i, val in enumerate(pVals):
-#                         if val <= 0.001:
-#                             significant.append(i)
-#                     print(len(significant))
+                    for ind in range(df.shape[1]):
+                        df.iloc[:,ind] = df.iloc[:,ind] - np.mean(df.iloc[:,ind])
+                    diff_mean = df
 
-#                     colors = [plt.cm.jet(float(i)/max(mahalanobis)) for i in mahalanobis]
-#                     fig = plt.figure(figsize=(8,6))
-#                     with plt.style.context(('ggplot')):
-#                         plt.scatter(newZ[:,0], newZ[:,1], c=colors, edgecolors='k', s=60)
-#                         plt.xlabel('x')
-#                         plt.ylabel('y')
-#                         plt.title('Outlier Color Coding')
-#                     fig.savefig('mahalanobis.png')
-#                     print("Plot done")
+                    covmat = np.cov(newZ.T)
+                    # Transposed due to numpy covariance parameter input being inverted for rows/cols
+
+                    invcovmat = np.linalg.inv(covmat)
+                    right = np.dot(diff_mean, invcovmat)
+                    mahamat = np.dot(right, diff_mean.T)
+                    mahalanobis = np.diag(mahamat)
+                    
+                    # cov = MinCovDet().fit(newZ)
+                    # mahalanobis = cov.mahalanobis(newZ)
+
+                    # print(type(mahalanobis))
+                    # print(mahalanobis.shape)
+                    # print(mahalanobis)
+
+                    pVals = 1 - chi2.cdf(mahalanobis, 2 - 1)
+                    # Formula for p values is correct
+
+                    # print(type(pVals))
+                    # print(pVals.shape)
+                    # print(pVals)
+                    
+                    significant = []
+                    for i, val in enumerate(pVals):
+                        if val <= 0.001:
+                            significant.append(i)
+                    print(len(significant))
+
+                    colors = [plt.cm.jet(float(i)/max(mahalanobis)) for i in mahalanobis]
+                    fig = plt.figure(figsize=(8,6))
+                    with plt.style.context(('ggplot')):
+                        plt.scatter(newZ[:,0], newZ[:,1], c=colors, edgecolors='k', s=60)
+                        plt.xlabel('x')
+                        plt.ylabel('y')
+                        plt.title('Outlier Color Coding')
+                    fig.savefig('mahalanobisFigs/mahalanobis.png')
                     
                     for i, yi in enumerate(y):
                         id = len(tracker_epoch)
